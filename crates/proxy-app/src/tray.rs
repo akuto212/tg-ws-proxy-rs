@@ -117,6 +117,9 @@ pub fn run_tray(
     cancel: CancellationToken,
     reload_handle: reload::Handle<EnvFilter, impl tracing::Subscriber + Send + Sync + 'static>,
 ) {
+    #[cfg(target_os = "macos")]
+    init_macos_app();
+
     let decoder = png::Decoder::new(std::io::Cursor::new(ICON_BYTES));
     let mut reader = decoder.read_info().expect("invalid icon PNG");
     let mut icon_buf = vec![0u8; reader.output_buffer_size()];
@@ -169,6 +172,9 @@ pub fn run_tray(
         #[cfg(target_os = "windows")]
         pump_win32_messages();
 
+        #[cfg(target_os = "macos")]
+        pump_macos_events();
+
         if let Ok(event) = menu_rx.try_recv() {
             if event.id == open_tg_id {
                 crate::autosetup::open_telegram_proxy(&state.host, state.port, &state.secret);
@@ -200,11 +206,59 @@ pub fn run_tray(
             stats_item.set_text(&text);
         }
 
+        // On macOS, CFRunLoopRunInMode already provides ~100ms delay
+        #[cfg(not(target_os = "macos"))]
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         if cancel.is_cancelled() {
             break;
         }
+    }
+}
+
+// ── macOS event loop ─────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn init_macos_app() {
+    type MsgSendFn =
+        unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    type MsgSendI64Fn = unsafe extern "C" fn(
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+        i64,
+    ) -> *mut std::ffi::c_void;
+
+    #[link(name = "AppKit", kind = "framework")]
+    extern "C" {
+        fn objc_getClass(name: *const u8) -> *mut std::ffi::c_void;
+        fn sel_registerName(name: *const u8) -> *mut std::ffi::c_void;
+        fn objc_msgSend();
+    }
+
+    unsafe {
+        let send: MsgSendFn = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let send_i64: MsgSendI64Fn = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+
+        let cls = objc_getClass(b"NSApplication\0".as_ptr());
+        let sel = sel_registerName(b"sharedApplication\0".as_ptr());
+        let app = send(cls, sel);
+
+        // NSApplicationActivationPolicyAccessory = 1 (no dock icon)
+        let sel = sel_registerName(b"setActivationPolicy:\0".as_ptr());
+        send_i64(app, sel, 1);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pump_macos_events() {
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, return_after: u8) -> i32;
+    }
+
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, 0);
     }
 }
 
