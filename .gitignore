@@ -1,0 +1,6 @@
+target/
+.cargo
+.claude
+docs/superpowers/
+config.json
+proxy-errors.log
