@@ -206,8 +206,6 @@ pub fn run_tray(
             stats_item.set_text(&text);
         }
 
-        // On macOS, CFRunLoopRunInMode already provides ~100ms delay
-        #[cfg(not(target_os = "macos"))]
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         if cancel.is_cancelled() {
@@ -219,46 +217,94 @@ pub fn run_tray(
 // ── macOS event loop ─────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn init_macos_app() {
-    type MsgSendFn =
-        unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> *mut std::ffi::c_void;
-    type MsgSendI64Fn = unsafe extern "C" fn(
-        *mut std::ffi::c_void,
-        *mut std::ffi::c_void,
-        i64,
-    ) -> *mut std::ffi::c_void;
+mod macos {
+    use std::ffi::c_void;
 
     #[link(name = "AppKit", kind = "framework")]
+    extern "C" {}
+
+    #[link(name = "Foundation", kind = "framework")]
     extern "C" {
-        fn objc_getClass(name: *const u8) -> *mut std::ffi::c_void;
-        fn sel_registerName(name: *const u8) -> *mut std::ffi::c_void;
-        fn objc_msgSend();
+        pub(super) static NSDefaultRunLoopMode: *mut c_void;
     }
 
+    extern "C" {
+        pub(super) fn objc_getClass(name: *const u8) -> *mut c_void;
+        pub(super) fn sel_registerName(name: *const u8) -> *mut c_void;
+        pub(super) fn objc_msgSend();
+    }
+
+    pub(super) type Send0 =
+        unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
+    pub(super) type SendI64 =
+        unsafe extern "C" fn(*mut c_void, *mut c_void, i64) -> *mut c_void;
+    pub(super) type SendNextEvent =
+        unsafe extern "C" fn(*mut c_void, *mut c_void, u64, *mut c_void, *mut c_void, i8) -> *mut c_void;
+    pub(super) type SendVoidPtr =
+        unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
+}
+
+#[cfg(target_os = "macos")]
+fn init_macos_app() {
+    use macos::*;
+
     unsafe {
-        let send: MsgSendFn = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-        let send_i64: MsgSendI64Fn = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let send0: Send0 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let send_i64: SendI64 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
 
         let cls = objc_getClass(b"NSApplication\0".as_ptr());
         let sel = sel_registerName(b"sharedApplication\0".as_ptr());
-        let app = send(cls, sel);
+        let app = send0(cls, sel);
 
         // NSApplicationActivationPolicyAccessory = 1 (no dock icon)
         let sel = sel_registerName(b"setActivationPolicy:\0".as_ptr());
         send_i64(app, sel, 1);
+
+        // finishLaunching — required for proper event delivery
+        let sel = sel_registerName(b"finishLaunching\0".as_ptr());
+        send0(app, sel);
     }
 }
 
 #[cfg(target_os = "macos")]
 fn pump_macos_events() {
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
-        fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, return_after: u8) -> i32;
-    }
+    use macos::*;
 
     unsafe {
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, 0);
+        let send0: Send0 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let send_next: SendNextEvent = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let send_evt: SendVoidPtr = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+
+        let app = send0(
+            objc_getClass(b"NSApplication\0".as_ptr()),
+            sel_registerName(b"sharedApplication\0".as_ptr()),
+        );
+
+        let distant_past = send0(
+            objc_getClass(b"NSDate\0".as_ptr()),
+            sel_registerName(b"distantPast\0".as_ptr()),
+        );
+
+        let next_sel = sel_registerName(
+            b"nextEventMatchingMask:untilDate:inMode:dequeue:\0".as_ptr(),
+        );
+        let send_sel = sel_registerName(b"sendEvent:\0".as_ptr());
+
+        // Drain all pending events (NSEventMaskAny = u64::MAX)
+        loop {
+            let event = send_next(
+                app,
+                next_sel,
+                u64::MAX,
+                distant_past,
+                NSDefaultRunLoopMode,
+                1, // YES — dequeue
+            );
+            if event.is_null() {
+                break;
+            }
+            send_evt(app, send_sel, event);
+        }
     }
 }
 
