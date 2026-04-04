@@ -21,14 +21,6 @@ jobs:
             os: ubuntu-latest
             artifact: proxy-app
             archive: tg-ws-proxy-rs-linux-x86_64.tar.gz
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: proxy-app
-            archive: tg-ws-proxy-rs-macos-x86_64.tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: proxy-app
-            archive: tg-ws-proxy-rs-macos-aarch64.tar.gz
 
     runs-on: ${{ matrix.os }}
 
@@ -87,5 +79,3 @@ jobs:
           files: |
             tg-ws-proxy-rs-windows-x86_64.zip
             tg-ws-proxy-rs-linux-x86_64.tar.gz
-            tg-ws-proxy-rs-macos-x86_64.tar.gz
-            tg-ws-proxy-rs-macos-aarch64.tar.gz
