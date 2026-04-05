@@ -32,7 +32,7 @@ struct Cli {
     no_tray: bool,
     #[arg(long, default_value_t = 4)]
     pool_size: usize,
-    #[arg(long, default_value_t = 64)]
+    #[arg(long, default_value_t = 256)]
     buf_kb: usize,
     #[arg(short, long)]
     verbose: bool,

@@ -200,8 +200,9 @@ async fn handle_client_inner(
                 }
                 Err(e) => {
                     warn!("WS connect failed for DC{dc} media={is_media}: {e}");
+                    let blacklist = matches!(e, crate::ProxyError::WsRedirect);
                     let mut ft = ctx.fail_tracker.lock().await;
-                    ft.record_failure(dk, false);
+                    ft.record_failure(dk, blacklist);
                     ctx.stats.inc(&ctx.stats.ws_errors);
                     None
                 }
@@ -272,6 +273,11 @@ async fn try_ws_connect(
                 return Ok(ws);
             }
             Ok(Err(e)) => {
+                let err_str = e.to_string();
+                if err_str.contains("302") || err_str.contains("redirect") {
+                    warn!("WS redirect (302) via {domain} for DC{dc}");
+                    return Err(crate::ProxyError::WsRedirect);
+                }
                 debug!("WS connect failed via {domain}: {e}");
             }
             Err(_) => {
@@ -391,11 +397,10 @@ async fn tcp_fallback_reencrypt(
 ) -> crate::Result<()> {
     // Resolve target IP
     let default_ips = dc_default_ips();
-    let ip = ctx
-        .dc_redirects
+    let ip = default_ips
         .get(&dc)
-        .map(|s| s.as_str())
-        .or_else(|| default_ips.get(&dc).copied())
+        .copied()
+        .or_else(|| ctx.dc_redirects.get(&dc).map(|s| s.as_str()))
         .ok_or_else(|| {
             crate::ProxyError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,

@@ -140,10 +140,9 @@ pub async fn start_proxy_with_stats(
     info!("    {}", link);
     info!("============================================================");
 
-    // 7. Warm up pool
+    // 7. Warm up pool (best-effort, no blacklisting on failure)
     {
         let pool_clone = Arc::clone(&pool);
-        let ctx_clone = Arc::clone(&tunnel_ctx);
         let warmup_dcs: Vec<(u8, bool)> = config
             .dc_redirects
             .keys()
@@ -152,17 +151,6 @@ pub async fn start_proxy_with_stats(
         tokio::spawn(async move {
             pool_clone.warmup(&warmup_dcs).await;
             debug!("Pool warmup complete");
-            let failed = pool_clone.empty_keys(&warmup_dcs).await;
-            if !failed.is_empty() {
-                let mut ft = ctx_clone.fail_tracker.lock().await;
-                for key in &failed {
-                    debug!(
-                        "Pre-blacklisting DC {} media={} after warmup failure",
-                        key.0, key.1
-                    );
-                    ft.record_failure(*key, true);
-                }
-            }
         });
     }
 

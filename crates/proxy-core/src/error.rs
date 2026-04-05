@@ -10,6 +10,8 @@ pub enum ProxyError {
     WebSocket(String),
     #[error("Handshake error: {0}")]
     Handshake(String),
+    #[error("WS redirect (302)")]
+    WsRedirect,
     #[error("Timeout")]
     Timeout,
 }
